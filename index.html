@@ -1,0 +1,315 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Scan Tabung Gas</title>
+<style>
+  :root {
+    --bg: #f4f6fa; --card: #ffffff; --text: #1b2430; --muted: #5c6878;
+    --line: #d7dde6; --brand: #1f4e9c; --brand-text: #ffffff;
+    --ok: #1a7f4b; --err: #b3261e; --warn: #8a5a00;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12161c; --card: #1b222b; --text: #e8edf3; --muted: #9aa7b8;
+      --line: #2f3a47; --brand: #5b9bff; --brand-text: #0b1220;
+      --ok: #4cc38a; --err: #ff8a80; --warn: #f0b85a;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: Arial, Helvetica, sans-serif; font-size: 16px; line-height: 1.4;
+  }
+  main { max-width: 520px; margin: 0 auto; padding: 16px; padding-bottom: 40px; }
+  h1 { font-size: 20px; margin: 4px 0 12px; }
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    padding: 14px; margin-bottom: 14px;
+  }
+  label { display: block; font-size: 13px; color: var(--muted); margin: 10px 0 4px; }
+  label:first-child { margin-top: 0; }
+  input, select {
+    width: 100%; padding: 12px; font-size: 16px; border-radius: 8px;
+    border: 1px solid var(--line); background: var(--bg); color: var(--text);
+  }
+  button {
+    font-size: 16px; padding: 12px 16px; border-radius: 10px; border: 1px solid var(--line);
+    background: var(--card); color: var(--text); cursor: pointer;
+  }
+  button.primary { background: var(--brand); color: var(--brand-text); border-color: var(--brand); font-weight: bold; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .row { display: flex; gap: 8px; }
+  .row > * { flex: 1; }
+  #reader { width: 100%; min-height: 60px; border-radius: 10px; overflow: hidden; background: #000; }
+  #reader video { border-radius: 10px; }
+  .hint { font-size: 13px; color: var(--muted); margin: 8px 0 0; }
+  ul { list-style: none; margin: 8px 0 0; padding: 0; }
+  li {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; margin-bottom: 6px;
+    font-family: "Courier New", monospace; font-size: 16px;
+  }
+  li button { padding: 4px 10px; font-size: 14px; }
+  #count { font-weight: bold; }
+  #status { margin: 10px 0 0; font-size: 15px; min-height: 22px; }
+  #status.ok { color: var(--ok); }
+  #status.err { color: var(--err); }
+  #status.warn { color: var(--warn); }
+  .small { font-size: 13px; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Scan Tabung Gas</h1>
+
+  <div class="card">
+    <label for="pin">PIN petugas</label>
+    <input id="pin" type="password" inputmode="numeric" autocomplete="off" placeholder="PIN dari admin">
+
+    <label for="event">Kejadian</label>
+    <select id="event">
+      <option value="KELUAR">KELUAR - tabung isi keluar ke relasi</option>
+      <option value="MASUK">MASUK - tabung kembali ke gudang</option>
+      <option value="ISI">ISI - tabung kosong selesai diisi</option>
+      <option value="KOSONG">KOSONG - tabung isi jadi kosong di gudang</option>
+    </select>
+
+    <div id="relasiBox">
+      <label for="relasi" id="relasiLabel">Relasi</label>
+      <select id="relasi"></select>
+    </div>
+  </div>
+
+  <div class="card">
+    <div id="reader"></div>
+    <div class="row" style="margin-top:10px">
+      <button id="btnStart" class="primary">Mulai scan</button>
+      <button id="btnStop" disabled>Stop</button>
+    </div>
+    <p class="hint">Arahkan kamera ke barcode pada label, jarak sekitar 10-20 cm, pastikan cukup cahaya. Setiap barcode yang terbaca masuk ke daftar di bawah.</p>
+
+    <label for="manual" style="margin-top:14px">Atau ketik nomor seri</label>
+    <div class="row">
+      <input id="manual" type="text" autocapitalize="characters" autocomplete="off" placeholder="mis. 214045">
+      <button id="btnAdd" style="flex:0 0 auto">Tambah</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="align-items:center">
+      <div><span id="count">0</span> tabung</div>
+      <button id="btnClear" style="flex:0 0 auto">Kosongkan</button>
+    </div>
+    <ul id="list"></ul>
+    <button id="btnSend" class="primary" style="width:100%; margin-top:10px">Kirim</button>
+    <p id="status" role="status"></p>
+    <p class="small">Hasil pencatatan akan dibalas oleh bot di grup Telegram.</p>
+  </div>
+</main>
+
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<script>
+// ================= PENGATURAN (ubah di sini) =================
+const CONFIG = {
+  // Production URL dari node Webhook n8n (setelah workflow di-Publish)
+     WEBHOOK_URL: 'https://nama-akun-anda.app.n8n.cloud/webhook/scan-tabung-x7k2',
+  // Harus sama persis dengan nama di tab RELASI
+  RELASI: [
+    'WIKA BETON KIMA 2',
+    'WIKA BETON KIMA 20',
+    'PUTRA TUNGGAL CEMERLANG',
+    'BENGKEL PERINTIS MOTOR',
+  ],
+};
+// =============================================================
+
+const $ = id => document.getElementById(id);
+const store = {
+  get(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} },
+};
+
+let serials = store.get('serials', []);
+if (!Array.isArray(serials)) serials = [];
+let scanner = null, scanning = false, lastText = '', lastAt = 0;
+
+function setStatus(text, kind) {
+  const el = $('status');
+  el.textContent = text || '';
+  el.className = kind || '';
+}
+
+function needsRelasi() {
+  const ev = $('event').value;
+  return ev === 'KELUAR' || ev === 'MASUK';
+}
+
+function updateRelasiBox() {
+  $('relasiBox').style.display = needsRelasi() ? 'block' : 'none';
+  $('relasiLabel').textContent = $('event').value === 'MASUK' ? 'Relasi asal tabung' : 'Relasi tujuan';
+}
+
+function render() {
+  const ul = $('list');
+  ul.textContent = '';
+  serials.forEach((s, i) => {
+    const li = document.createElement('li');
+    const span = document.createElement('span');
+    span.textContent = s;
+    const b = document.createElement('button');
+    b.textContent = 'Hapus';
+    b.addEventListener('click', () => { serials.splice(i, 1); persist(); render(); });
+    li.appendChild(span);
+    li.appendChild(b);
+    ul.appendChild(li);
+  });
+  $('count').textContent = String(serials.length);
+}
+
+function persist() { store.set('serials', serials); }
+
+function beep() {
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return;
+    const ctx = new Ctx();
+    const o = ctx.createOscillator();
+    const g = ctx.createGain();
+    o.frequency.value = 1000;
+    g.gain.value = 0.1;
+    o.connect(g); g.connect(ctx.destination);
+    o.start();
+    setTimeout(() => { o.stop(); ctx.close(); }, 120);
+  } catch (e) {}
+  try { if (navigator.vibrate) navigator.vibrate(60); } catch (e) {}
+}
+
+function addSerial(raw, fromScan) {
+  const s = String(raw || '').trim().toUpperCase();
+  if (!/^[A-Z0-9-]{4,30}$/.test(s)) {
+    setStatus('Kode tidak valid: ' + s.slice(0, 30), 'warn');
+    return false;
+  }
+  if (serials.includes(s)) {
+    setStatus(s + ' sudah ada di daftar', 'warn');
+    return false;
+  }
+  serials.push(s);
+  persist();
+  render();
+  setStatus('Ditambahkan: ' + s, 'ok');
+  if (fromScan) beep();
+  return true;
+}
+
+function onScan(text) {
+  const now = Date.now();
+  if (text === lastText && now - lastAt < 2000) return; // cegah baca ganda berturut-turut
+  lastText = text; lastAt = now;
+  addSerial(text, true);
+}
+
+async function startScan() {
+  if (scanning) return;
+  if (typeof Html5Qrcode === 'undefined') {
+    setStatus('Pustaka scan gagal dimuat. Periksa koneksi internet lalu muat ulang halaman.', 'err');
+    return;
+  }
+  try {
+    scanner = scanner || new Html5Qrcode('reader', {
+      formatsToSupport: [Html5QrcodeSupportedFormats.CODE_128],
+      experimentalFeatures: { useBarCodeDetectorIfSupported: true },
+      verbose: false,
+    });
+    await scanner.start(
+      { facingMode: 'environment' },
+      {
+        fps: 10,
+        qrbox: (w, h) => ({ width: Math.floor(w * 0.9), height: Math.floor(Math.min(h * 0.6, 150)) }),
+        videoConstraints: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
+      },
+      onScan,
+      () => {}
+    );
+    scanning = true;
+    $('btnStart').disabled = true;
+    $('btnStop').disabled = false;
+    setStatus('Kamera aktif. Arahkan ke barcode.', '');
+  } catch (e) {
+    setStatus('Kamera tidak bisa dibuka. Izinkan akses kamera di browser dan pastikan halaman dibuka lewat https.', 'err');
+  }
+}
+
+async function stopScan() {
+  if (!scanner || !scanning) return;
+  try { await scanner.stop(); } catch (e) {}
+  scanning = false;
+  $('btnStart').disabled = false;
+  $('btnStop').disabled = true;
+}
+
+async function send() {
+  const pin = $('pin').value.trim();
+  const event = $('event').value;
+  const relasi = needsRelasi() ? $('relasi').value : '';
+
+  if (CONFIG.WEBHOOK_URL.indexOf('http') !== 0) { setStatus('Alamat webhook belum diatur di file halaman (CONFIG.WEBHOOK_URL).', 'err'); return; }
+  if (!pin) { setStatus('Isi PIN petugas dulu.', 'warn'); return; }
+  if (!serials.length) { setStatus('Daftar tabung masih kosong.', 'warn'); return; }
+  if (needsRelasi() && !relasi) { setStatus('Pilih relasi dulu.', 'warn'); return; }
+
+  const ringkas = event + (relasi ? ' - ' + relasi : '') + ': ' + serials.length + ' tabung';
+  if (!window.confirm('Kirim ' + ringkas + '?')) return;
+
+  $('btnSend').disabled = true;
+  setStatus('Mengirim...', '');
+  try {
+    const res = await fetch(CONFIG.WEBHOOK_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind: 'SCAN', pin: pin, event: event, relasi: relasi, serials: serials }),
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    serials = [];
+    persist();
+    render();
+    setStatus('Terkirim. Lihat balasan bot di grup Telegram.', 'ok');
+  } catch (e) {
+    setStatus('Gagal mengirim (periksa sinyal). Daftar tabung tetap tersimpan, coba kirim lagi.', 'err');
+  } finally {
+    $('btnSend').disabled = false;
+  }
+}
+
+// ---- inisialisasi ----
+(function init() {
+  CONFIG.RELASI.forEach(r => {
+    const o = document.createElement('option');
+    o.value = r; o.textContent = r;
+    $('relasi').appendChild(o);
+  });
+  $('pin').value = store.get('pin', '');
+  $('event').value = store.get('event', 'KELUAR');
+  const savedRel = store.get('relasi', '');
+  if (savedRel && CONFIG.RELASI.includes(savedRel)) $('relasi').value = savedRel;
+
+  $('pin').addEventListener('input', () => store.set('pin', $('pin').value));
+  $('event').addEventListener('change', () => { store.set('event', $('event').value); updateRelasiBox(); });
+  $('relasi').addEventListener('change', () => store.set('relasi', $('relasi').value));
+  $('btnStart').addEventListener('click', startScan);
+  $('btnStop').addEventListener('click', stopScan);
+  $('btnAdd').addEventListener('click', () => { if (addSerial($('manual').value, false)) $('manual').value = ''; });
+  $('manual').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); $('btnAdd').click(); } });
+  $('btnClear').addEventListener('click', () => {
+    if (serials.length && window.confirm('Kosongkan daftar?')) { serials = []; persist(); render(); setStatus('', ''); }
+  });
+  $('btnSend').addEventListener('click', send);
+  updateRelasiBox();
+  render();
+  if (CONFIG.WEBHOOK_URL.indexOf('http') !== 0) setStatus('Catatan admin: alamat webhook belum diatur.', 'warn');
+})();
+</script>
+</body>
+</html>
